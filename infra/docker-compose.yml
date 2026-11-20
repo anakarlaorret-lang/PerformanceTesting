@@ -1,0 +1,42 @@
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${MSSQL_PORT:-1433}:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  init-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - /opt/mssql-tools18/bin/sqlcmd -C -S db -U sa -P "$$MSSQL_SA_PASSWORD" -Q "IF DB_ID('eventflow') IS NULL CREATE DATABASE eventflow"
+    restart: "no"
+
+  api:
+    build: ../app
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: mssql+pyodbc://sa:${MSSQL_SA_PASSWORD}@db:1433/eventflow?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+      API_USERS: ${API_USERS:?Set API_USERS in .env}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+
+volumes:
+  mssql-data:
